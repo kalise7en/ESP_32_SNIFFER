@@ -1,0 +1,920 @@
+#include <SPI.h>
+#include <TFT_eSPI.h>
+#include <WiFi.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEScan.h>
+#include <BLEAdvertisedDevice.h>
+#include <FS.h>
+#include <RF24.h>
+#include <SD.h>
+// Function prototypes
+void performCalibration();
+void loadCalibration();
+void drawHomeScreen();
+void performBluetoothScan();
+void handleBluetoothScanScreenTouch(uint16_t x, uint16_t y);
+void handleHomeScreenTouch(uint16_t x, uint16_t y);
+void drawBottomBar();
+void handleBottomBarTouch(uint16_t x, uint16_t y);
+void initializeSD();
+void displaySDContents();
+void handleSDTouch(uint16_t x, uint16_t y);
+void handleWiFiScanScreenTouch(uint16_t x, uint16_t y);
+void performWiFiScan();
+void readCard();
+void scanSubset();
+void displaySubset(uint8_t start_channel, uint8_t end_channel);
+void scanAllChannels();
+
+// New NRF24 option and scan functions:
+void showNRF24OptionScreen();
+void handleNRF24OptionScreenTouch(uint16_t x, uint16_t y);
+void performNRF24WiFiScan();
+void performNRF24BTScan();
+void handleNRF24WiFiScreenTouch(uint16_t x, uint16_t y);
+void handleNRF24BTScreenTouch(uint16_t x, uint16_t y);
+
+// Modified scan functions for limited channels:
+void scanWiFiChannels();
+void displayWiFiSubset();
+void scanBTChannels();
+void displayBTSubset();
+
+void ensureLogDirs();
+void logWiFiScanToSD();
+void logBTScanToSD();
+
+
+
+
+#define RADIO_CSN_PIN 39
+#define RADIO_CE_PIN 38
+#define RADIO_SCK_PIN 35
+#define RADIO_MOSI_PIN 36
+#define RADIO_MISO_PIN 37
+
+
+#define CALIBRATION_FILE "/TouchCalData1" // File to store calibration data
+#define REPEAT_CAL false // Set to true to run calibration again
+
+
+uint16_t calData[5] PROGMEM = { 308, 3405, 423, 3472, 4 };
+
+// General button width and height for other buttons (like WiFi, Bluetooth, etc.)
+#define BTN_WIDTH 200
+#define BTN_HEIGHT 50
+
+//home screen buttons
+#define BTN_WIFI_X 20
+#define BTN_WIFI_Y 30
+
+#define BTN_BT_X 20
+#define BTN_BT_Y (BTN_WIFI_Y + BTN_HEIGHT + 20)
+
+#define BTN_SD_X 20
+#define BTN_SD_Y (BTN_BT_Y + BTN_HEIGHT + 20)
+
+#define BTN_NRF24_X 20
+#define BTN_NRF24_Y (BTN_SD_Y + BTN_HEIGHT + 20)
+
+// Bottom bar button width and height (these buttons will be 60px wide)
+#define BTN_BOTTOM_BAR_HEIGHT 50
+#define BTN_BOTTOM_BAR_WIDTH 60  // Each bottom bar button will be 60px wide
+
+// Define the positions and sizes for the home button
+#define BTN_HOME_X 10
+#define BTN_HOME_Y 220
+#define BTN_HOME_WIDTH 50
+#define BTN_HOME_HEIGHT 30
+
+#define BTN_WRITE_X 20
+#define BTN_WRITE_Y (BTN_READ_Y + BTN_HEIGHT + 20)
+
+#define BTN_CLONE_X 20
+#define BTN_CLONE_Y (BTN_WRITE_Y + BTN_HEIGHT + 20)
+
+#define TFT_WIDTH 240
+#define TFT_HEIGHT 320
+#define GRAPH_X_START 30
+#define GRAPH_Y_START 20
+#define GRAPH_WIDTH 180
+#define GRAPH_HEIGHT 240
+
+// Pagination constants
+#define PAGE_SIZE    23
+#define WIFI_MAX     500
+#define BT_MAX       500
+
+TFT_eSPI tft = TFT_eSPI(); // Initialize TFT screen
+
+// Calculate positions for the bottom bar buttons based on screen width
+  int leftArrowX = 0;   // Left Arrow button X position
+  int homeX = leftArrowX + BTN_BOTTOM_BAR_WIDTH;  // Home button X position (next to Left Arrow)
+  int saveX = homeX + BTN_BOTTOM_BAR_WIDTH;  // Save button X position (next to Home)
+  int rightArrowX = saveX + BTN_BOTTOM_BAR_WIDTH;  // Right Arrow button X position (next to Save)
+  int bottomBarY = tft.height() - BTN_BOTTOM_BAR_HEIGHT;  // Y position of the bottom bar (fixed at the bottom)
+
+
+// RF24 and TFT settings
+const uint8_t num_channels = 126; // Total channels (0-125)
+const uint8_t channels_per_update = 1; // Number of channels to process per update
+uint8_t signal_strength[num_channels]; // Array to hold signal strength values
+const int scan_repeats = 25; // Number of scans per channel for averaging
+uint8_t current_channel_index = 0; // Tracks the current channel subset being processed
+
+// Create RF24 and TFT objects
+RF24 radio(RADIO_CE_PIN, RADIO_CSN_PIN);
+
+// Wi‑Fi scan cache
+String wifiSSIDs[WIFI_MAX];
+int    wifiRSSI[WIFI_MAX];
+int    wifiChannel[WIFI_MAX];
+String wifiEnc[WIFI_MAX];
+int    wifiCount = 0;
+int    wifiPage  = 0;
+
+// BT scan cache
+String btMAC[BT_MAX];
+int    btRSSI[BT_MAX];
+int    btCount   = 0;
+int    btPage    = 0;
+
+
+enum ScreenState {
+  HomeScreen,
+  WIFIScreen,
+  BTScreen,
+  SDScreen,
+  READScreen,
+  NRF24Screen,         // Legacy scan (if needed)
+  NRF24OptionScreen,   // New option screen for NRF24
+  NRF24WiFiScreen,     // New WiFi scan screen for NRF24
+  NRF24BTScreen        
+};
+
+ScreenState CurrentScreen = HomeScreen; // Initialize to Home Screen
+void setup() {
+  Serial.begin(9600);
+
+  // 1) RF24 init (unchanged)
+  SPI.begin(35, 37, 36, RADIO_CSN_PIN);
+  if (!radio.begin()) {
+    Serial.println("RF24 initialization failed!");
+    while (1);
+  }
+  Serial.println("RF24 initialization!");
+  radio.setPALevel(RF24_PA_HIGH);
+  radio.setDataRate(RF24_2MBPS);
+  radio.setAutoAck(false);
+  radio.disableCRC();
+
+  // 2) TFT init (unchanged)
+  SPI.begin(14, 12, 13, TFT_CS);
+  tft.init();
+  tft.setRotation(0);
+  tft.fillScreen(TFT_BLACK);
+
+  // 3) Touch CS pins (unchanged)
+  digitalWrite(6, HIGH);
+  digitalWrite(5, HIGH);
+  digitalWrite(7, HIGH);
+
+  // 4) Calibration (unchanged)
+  if (REPEAT_CAL) performCalibration();
+  else            loadCalibration();
+  tft.setTouch(calData);
+  // 6) Finally, draw the home screen
+
+
+  drawHomeScreen();
+}
+
+
+void loop() {
+  uint16_t x, y;
+  if (tft.getTouch(&x, &y)) {
+    if (CurrentScreen == HomeScreen) {
+      handleHomeScreenTouch(x, y);
+    } else if (CurrentScreen == WIFIScreen) {
+      handleWiFiScanScreenTouch(x, y);
+    } else if (CurrentScreen == BTScreen) {
+      handleBluetoothScanScreenTouch(x, y);
+    } else if (CurrentScreen == SDScreen) {
+      handleSDTouch(x, y);
+    } else if (CurrentScreen == READScreen) {
+      handleBottomBarTouch(x, y);
+    } else if (CurrentScreen == NRF24Screen) {
+      // Legacy scan method (if used) – here we choose to route to the new options screen.
+      showNRF24OptionScreen();
+    } else if (CurrentScreen == NRF24OptionScreen) {
+      handleNRF24OptionScreenTouch(x, y);
+    } else if (CurrentScreen == NRF24WiFiScreen) {
+      handleNRF24WiFiScreenTouch(x, y);
+    } else if (CurrentScreen == NRF24BTScreen) {
+      handleNRF24BTScreenTouch(x, y);
+    }
+  }
+  delay(20);
+}
+// Update the Home Screen handler for SD card button
+
+// Creates the two log‑folders on your SD card
+
+
+
+void performWiFiScan() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setCursor(10, 10);
+  tft.println("Scanning for Wifi devices...");
+  CurrentScreen = WIFIScreen;
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+
+  // scan once and cache
+  wifiCount = WiFi.scanNetworks();
+  if (wifiCount > WIFI_MAX) wifiCount = WIFI_MAX;
+  for (int i = 0; i < wifiCount; i++) {
+    wifiSSIDs[i]   = WiFi.SSID(i);
+    wifiRSSI[i]    = WiFi.RSSI(i);
+    wifiChannel[i] = WiFi.channel(i);
+    // encryption
+    switch (WiFi.encryptionType(i)) {
+      case WIFI_AUTH_OPEN:          wifiEnc[i] = "Open";   break;
+      case WIFI_AUTH_WEP:           wifiEnc[i] = "WEP";    break;
+      case WIFI_AUTH_WPA_PSK:       wifiEnc[i] = "WPA";    break;
+      case WIFI_AUTH_WPA2_PSK:      wifiEnc[i] = "WPA2";   break;
+      default:                      wifiEnc[i] = "Other";  break;
+    }
+  }
+  WiFi.scanDelete();
+
+  // Reset to first page
+  wifiPage = 0;
+  displayWiFiPage();
+}
+
+void displayWiFiPage() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setCursor(10, 10);
+  tft.printf("WiFi networks (%d):\n\n", wifiCount);
+
+  int start = wifiPage * PAGE_SIZE;
+  int end   = min(start + PAGE_SIZE, wifiCount);
+  for (int i = start; i < end; i++) {
+    int row = i - start;
+    int y   = 30 + row * 10;  // 10px per line
+    tft.setCursor(10, y);
+    tft.printf("%2d) %-12.12s RSSI:%4d CH:%2d\n",
+      i+1,
+      wifiSSIDs[i].c_str(),
+      wifiRSSI[i],
+      wifiChannel[i]
+    );
+  }
+  drawBottomBar();
+}
+
+
+
+void performBluetoothScan() {
+  CurrentScreen = BTScreen;
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setCursor(10, 10);
+  tft.println("Scanning for Bluetooth devices...");
+
+  // run scan once and cache
+  BLEDevice::init("");
+  BLEScan* scan = BLEDevice::getScan();
+  scan->setActiveScan(true);
+  scan->setInterval(100);
+  scan->setWindow(99);
+  BLEScanResults* res = scan->start(5, false);
+
+  btCount = res->getCount();
+  if (btCount > BT_MAX) btCount = BT_MAX;
+  for (int i = 0; i < btCount; i++) {
+    auto dev = res->getDevice(i);
+    btMAC[i]  = dev.getAddress().toString().c_str();
+    btRSSI[i] = dev.getRSSI();
+  }
+  scan->clearResults();
+
+  btPage = 0;
+  displayBTPage();
+}
+
+void displayBTPage() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setCursor(10, 10);
+  tft.printf("BT devices (%d):\n\n", btCount);
+
+  int start = btPage * PAGE_SIZE;
+  int end   = min(start + PAGE_SIZE, btCount);
+  for (int i = start; i < end; i++) {
+    int row = i - start;
+    int y   = 30 + row * 10;
+    tft.setCursor(10, y);
+    tft.printf("%2d) %s | RSSI:%4d\n",
+      i+1,
+      btMAC[i].c_str(),
+      btRSSI[i]
+    );
+  }
+  drawBottomBar();
+}
+// ——————————————————————————————————————————————————————————————
+// Logging helpers
+// ——————————————————————————————————————————————————————————————
+// Create the two log‑folders on your SD card
+void ensureLogDirs() {
+  // use the standard SD object
+  if (!SD.exists("/wifi_logs")) {
+    SD.mkdir("/wifi_logs");
+  }
+  if (!SD.exists("/bt_logs")) {
+    SD.mkdir("/bt_logs");
+  }
+}
+
+// ——————————————————————————————————————————————————————————————
+// Logging helpers (must match prototypes)
+// ——————————————————————————————————————————————————————————————
+
+void logWiFiScanToSD() {
+  ensureLogDirs();
+  File f = SD.open("/wifi_logs/wifi_log.txt", FILE_APPEND);
+  if (!f) {
+    Serial.println("❌ Failed to open WiFi log");
+    return;
+  }
+  f.printf("=== WiFi @ %lu ===\n", millis());
+  for (int i = 0; i < wifiCount; i++) {
+    f.printf("%2d, \"%s\", RSSI=%d, CH=%d\n",
+      i + 1,
+      wifiSSIDs[i].c_str(),
+      wifiRSSI[i],
+      wifiChannel[i]
+    );
+  }
+  f.println();
+  f.close();
+  // feedback
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.setTextDatum(TR_DATUM);
+  tft.drawString("Saved to SD", tft.width() - 5, 10);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+}
+
+void logBTScanToSD() {
+  ensureLogDirs();
+  File f = SD.open("/bt_logs/bt_log.txt", FILE_APPEND);
+  if (!f) {
+    Serial.println("❌ Failed to open BT log");
+    return;
+  }
+  f.printf("=== BT @ %lu ===\n", millis());
+  for (int i = 0; i < btCount; i++) {
+    f.printf("%2d, %s, RSSI=%d\n",
+      i + 1,
+      btMAC[i].c_str(),
+      btRSSI[i]
+    );
+  }
+  f.println();
+  f.close();
+  // feedback
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.setTextDatum(TR_DATUM);
+  tft.drawString("Saved to SD", tft.width() - 5, 10);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+}
+
+
+
+// Call this once in setup() instead of your old initializeSD():
+void initializeSD() {
+  CurrentScreen = SDScreen;
+  tft.fillScreen(TFT_BLACK);
+  tft.setCursor(10, 10);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.println("Initializing SD card...");
+  if(!SD.begin(7, tft.getSPIinstance())){
+    Serial.println("SD card initialization failed!");
+    return;
+  }
+  uint8_t cardType = SD.cardType();
+  Serial.print("SD Card Type: ");
+  if(cardType == CARD_MMC) Serial.println("MMC");
+  else if(cardType == CARD_SD) Serial.println("SDSC");
+  else if(cardType == CARD_SDHC) Serial.println("SDHC");
+  else Serial.println("UNKNOWN");
+  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+  Serial.printf("SD Card Size: %lluMB\n", cardSize);
+  Serial.println("Initialization done.");
+  displaySDContents();
+}
+
+
+void displaySDContents() {
+  File root = SD.open("/");
+  if (!root || !root.isDirectory()) {
+    tft.println("SD root open err");
+    return;
+  }
+  tft.fillScreen(TFT_BLACK);
+  tft.setCursor(10,10);
+  tft.setTextColor(TFT_WHITE);
+  tft.println("SD Card Contents:");
+  int idx = 0;
+  File f = root.openNextFile();
+  while (f) {
+    tft.printf("%2d. %-12.12s %s\n",
+      ++idx,
+      f.name(),
+      f.isDirectory() ? "[DIR]" : ""
+    );
+    f = root.openNextFile();
+  }
+  drawBottomBar();
+}
+
+
+
+
+// Modify the home button handling to match its new positio
+void handleWiFiScanScreenTouch(uint16_t x, uint16_t y) {
+  int buttonY = tft.height() - BTN_HEIGHT - 20;
+  if (x >= BTN_HOME_X && x <= (BTN_HOME_X + BTN_HOME_WIDTH) && y >= buttonY && y <= (buttonY + BTN_HOME_HEIGHT)) {
+    drawHomeScreen(); // Return to the home screen
+  }
+  handleBottomBarTouch(x, y);  // Pass the touch coordinates to handleBottomBarTouch
+}
+
+void handleBluetoothScanScreenTouch(uint16_t x, uint16_t y) {
+  int buttonY = tft.height() - BTN_HEIGHT - 20;
+  if (x >= BTN_HOME_X && x <= (BTN_HOME_X + BTN_HOME_WIDTH) && y >= buttonY && y <= (buttonY + BTN_HOME_HEIGHT)) {
+    drawHomeScreen(); // Return to the home screen
+  }
+  handleBottomBarTouch(x, y);  // Pass the touch coordinates to handleBottomBarTouch
+}
+// Handle touch events on SD card screen
+void handleSDTouch(uint16_t x, uint16_t y) {
+  int buttonY = tft.height() - BTN_HEIGHT - 20;
+  if (x >= BTN_HOME_X && x <= (BTN_HOME_X + BTN_HOME_WIDTH) && y >= buttonY && y <= (buttonY + BTN_HOME_HEIGHT)) {
+    drawHomeScreen();  // Return to the home screen
+  }
+  handleBottomBarTouch(x, y);  // Pass the touch coordinates to handleBottomBarTouch
+}
+// --- UPDATED ICONS ---
+
+void drawWiFiIcon(int cx, int cy) {
+  // move the whole icon down by 5 pixels
+  int baseY = cy + 5;
+  for (int i = 0; i < 3; i++) {
+    int r = 10 + i * 6;
+    for (int theta = 135; theta >= 45; theta -= 5) {
+      float rad = theta * PI / 180.0f;
+      int px = cx + cos(rad) * r;
+      int py = baseY - sin(rad) * r;
+      tft.drawPixel(px, py, TFT_GREEN);
+    }
+  }
+  tft.fillCircle(cx, baseY, 4, TFT_GREEN);
+}
+
+// 2) SD‑card icon: upward rectangle with 45° cut on top‐left,
+//    four vertical stripes, and a white label window in center.
+// Rotated SD‑card icon (portrait), no label window, with 4 shortened vertical grooves
+void drawSDIcon(int cx, int cy) {
+  const int w   = 28;   // now narrower than tall
+  const int h   = 40;
+  const int cut = 12;   // cut size remains
+  int x0 = cx - w/2;
+  int y0 = cy - h/2;
+
+  // 1) Draw the 5‐segment outline with a 45° cut on top‐left
+  // Diagonal cut
+  tft.drawLine(x0,        y0 + cut,
+               x0 + cut,  y0,      TFT_WHITE);
+  // Top edge
+  tft.drawLine(x0 + cut,  y0,
+               x0 + w,    y0,      TFT_WHITE);
+  // Right edge
+  tft.drawLine(x0 + w,    y0,
+               x0 + w,    y0 + h,  TFT_WHITE);
+  // Bottom edge
+  tft.drawLine(x0 + w,    y0 + h,
+               x0,        y0 + h,  TFT_WHITE);
+  // Left edge below cut
+  tft.drawLine(x0,        y0 + h,
+               x0,        y0 + cut, TFT_WHITE);
+
+  // 2) Four vertical grooves, shorter by 8px top & bottom
+  int grooveTop    = y0 + 8;
+  int grooveBottom = y0 + h - 8;
+  for (int i = 1; i <= 4; i++) {
+    int lx = x0 + cut + i * (w - cut) / 5;
+    tft.drawLine(lx, grooveTop, lx, grooveBottom, TFT_WHITE);
+  }
+}
+
+
+// 2) Bluetooth icon in blue and thicker
+void drawBTIcon(int cx, int cy) {
+  const uint16_t col = TFT_BLUE;
+  for (int dx = 0; dx <= 2; dx++) {         // three‑pixel stroke
+    tft.drawLine(cx+dx, cy - 20, cx+dx, cy + 20, col);
+    tft.drawLine(cx+dx, cy - 20, cx + 10+dx, cy - 10, col);
+    tft.drawLine(cx + 10+dx, cy - 10, cx+dx, cy, col);
+    tft.drawLine(cx+dx, cy, cx + 10+dx, cy + 10, col);
+    tft.drawLine(cx + 10+dx, cy + 10, cx+dx, cy + 20, col);
+  }
+}
+
+
+
+
+// 4) 4‑bar cellular‐style icon for NRF24
+void drawNRFIcon(int cx, int cy) {
+  int barW = 6, gap = 4;
+  for (int i = 0; i < 4; i++) {
+    int bh = (i+1) * 8;
+    int x = cx - ((4*barW + 3*gap)/2) + i*(barW+gap);
+    int y = cy + 16 - bh;
+    tft.fillRect(x, y, barW, bh, TFT_WHITE);
+  }
+}
+
+// --- UPDATED HOME SCREEN ---
+
+// --- Updated Home Screen Drawing ---
+void drawHomeScreen() {
+  CurrentScreen = HomeScreen;
+  tft.fillScreen(TFT_BLACK);
+
+  // 1) Title
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextSize(2);
+  tft.drawString("ESP_SNIFFER", tft.width()/2, 18);
+
+  // 2) 2×2 grid of rounded buttons with icons
+  tft.setTextSize(1);
+  const int btnSize   = 80;
+  const int btnRadius = 12;
+  const int spacing   = 20;
+  const int cols      = 2;
+  const int startX    = (tft.width() - (cols*btnSize + (cols-1)*spacing)) / 2;
+  const int startY    = 50;
+
+  for (int i = 0; i < 4; i++) {
+    int col = i % cols, row = i / cols;
+    int x   = startX + col*(btnSize + spacing);
+    int y   = startY + row*(btnSize + spacing);
+
+    // Draw the rounded-corner frame
+    tft.drawRoundRect(x, y, btnSize, btnSize, btnRadius, TFT_WHITE);
+
+    // Center coordinates for icon
+    int cx = x + btnSize/2, cy = y + btnSize/2;
+
+    // Draw the requested icon
+    switch (i) {
+      case 0: drawWiFiIcon(cx, cy);  break;
+      case 1: drawBTIcon(cx, cy);    break;
+      case 2: drawSDIcon(cx, cy);    break;  // uses your new rotated version
+      case 3: drawNRFIcon(cx, cy);   break;
+    }
+  }
+}
+
+// --- Touch Handler (UNCHANGED) ---
+// --- Unified, grid‑based Home Screen touch handler — only one in your code! ---
+void handleHomeScreenTouch(uint16_t x, uint16_t y) {
+  // Must exactly match drawHomeScreen()’s grid parameters:
+  const int btnSize = 80;
+  const int spacing = 20;
+  const int cols    = 2;
+  const int startX  = (tft.width() - (cols*btnSize + (cols-1)*spacing)) / 2;
+  const int startY  = 50;
+
+  // Compute column and row indices
+  int col = (x - startX) / (btnSize + spacing);
+  int row = (y - startY) / (btnSize + spacing);
+
+  // Only proceed if touch in the 2×2 grid
+  if (col >= 0 && col < cols && row >= 0 && row < 2) {
+    int idx = row * cols + col;
+    int bx  = startX + col * (btnSize + spacing);
+    int by  = startY + row * (btnSize + spacing);
+
+    // Confirm the touch is actually inside the square
+    if (x >= bx && x < bx + btnSize && y >= by && y < by + btnSize) {
+      switch (idx) {
+        case 0: performWiFiScan();       break;  // top‑left
+        case 1: performBluetoothScan();  break;  // top‑right
+        case 2: initializeSD();          break;  // bottom‑left
+        case 3: showNRF24OptionScreen(); break;  // bottom‑right
+      }
+      return;
+    }
+  }
+}
+
+
+
+
+void drawBottomBar() {
+  // Set the border color to white
+  tft.drawRect(leftArrowX, bottomBarY, BTN_BOTTOM_BAR_WIDTH, BTN_BOTTOM_BAR_HEIGHT, TFT_WHITE);
+  tft.drawRect(homeX, bottomBarY, BTN_BOTTOM_BAR_WIDTH, BTN_BOTTOM_BAR_HEIGHT, TFT_WHITE);
+  tft.drawRect(saveX, bottomBarY, BTN_BOTTOM_BAR_WIDTH, BTN_BOTTOM_BAR_HEIGHT, TFT_WHITE);
+  tft.drawRect(rightArrowX, bottomBarY, BTN_BOTTOM_BAR_WIDTH, BTN_BOTTOM_BAR_HEIGHT, TFT_WHITE);
+
+  // Set the background color for buttons to black
+  tft.fillRect(leftArrowX + 2, bottomBarY + 2, BTN_BOTTOM_BAR_WIDTH - 4, BTN_BOTTOM_BAR_HEIGHT - 4, TFT_BLACK);
+  tft.fillRect(homeX + 2, bottomBarY + 2, BTN_BOTTOM_BAR_WIDTH - 4, BTN_BOTTOM_BAR_HEIGHT - 4, TFT_BLACK);
+  tft.fillRect(saveX + 2, bottomBarY + 2, BTN_BOTTOM_BAR_WIDTH - 4, BTN_BOTTOM_BAR_HEIGHT - 4, TFT_BLACK);
+  tft.fillRect(rightArrowX + 2, bottomBarY + 2, BTN_BOTTOM_BAR_WIDTH - 4, BTN_BOTTOM_BAR_HEIGHT - 4, TFT_BLACK);
+
+  // Set the text color to white
+  tft.setTextColor(TFT_WHITE);
+  tft.setTextSize(1);  // Set text size
+
+  // Draw text on each button
+  tft.setCursor(leftArrowX + BTN_BOTTOM_BAR_WIDTH / 4, bottomBarY + BTN_BOTTOM_BAR_HEIGHT / 3);
+  tft.print("<");  // Left Arrow button text
+
+  tft.setCursor(homeX + BTN_BOTTOM_BAR_WIDTH / 4, bottomBarY + BTN_BOTTOM_BAR_HEIGHT / 3);
+  tft.print("Home");  // Home button text
+
+  tft.setCursor(saveX + BTN_BOTTOM_BAR_WIDTH / 4, bottomBarY + BTN_BOTTOM_BAR_HEIGHT / 3);
+  tft.print("Save");  // Save button text
+
+  tft.setCursor(rightArrowX + BTN_BOTTOM_BAR_WIDTH / 4, bottomBarY + BTN_BOTTOM_BAR_HEIGHT / 3);
+  tft.print(">");  // Right Arrow button text
+}
+
+// Function to draw a button
+// Define the function to handle touch events for the bottom bar
+void handleBottomBarTouch(uint16_t x, uint16_t y) {
+  // Left arrow:
+  if (x >= leftArrowX && x <= leftArrowX+BTN_BOTTOM_BAR_WIDTH &&
+      y >= bottomBarY  && y <= bottomBarY+BTN_BOTTOM_BAR_HEIGHT) {
+    if (CurrentScreen == WIFIScreen && wifiPage > 0) {
+      wifiPage--; displayWiFiPage();
+      return;
+    }
+    if (CurrentScreen == BTScreen && btPage > 0) {
+      btPage--; displayBTPage();
+      return;
+    }
+  }
+  // Home:
+  else if (x >= homeX && x <= homeX+BTN_BOTTOM_BAR_WIDTH &&
+           y >= bottomBarY && y <= bottomBarY+BTN_BOTTOM_BAR_HEIGHT) {
+    drawHomeScreen();
+    return;
+  }
+  // Save (if you’ve got that):
+  else if (x >= saveX && x <= saveX+BTN_BOTTOM_BAR_WIDTH &&
+           y >= bottomBarY && y <= bottomBarY+BTN_BOTTOM_BAR_HEIGHT) {
+    if (CurrentScreen == WIFIScreen) logWiFiScanToSD();
+    else if (CurrentScreen == BTScreen) logBTScanToSD();
+    return;
+  }
+  // Right arrow:
+  else if (x >= rightArrowX && x <= rightArrowX+BTN_BOTTOM_BAR_WIDTH &&
+           y >= bottomBarY   && y <= bottomBarY+BTN_BOTTOM_BAR_HEIGHT) {
+    if (CurrentScreen == WIFIScreen
+        && (wifiPage+1)*PAGE_SIZE < wifiCount) {
+      wifiPage++; displayWiFiPage(); return;
+    }
+    if (CurrentScreen == BTScreen
+        && (btPage+1)*PAGE_SIZE < btCount) {
+      btPage++; displayBTPage(); return;
+    }
+  }
+}
+
+
+void showNRF24OptionScreen() {
+  CurrentScreen = NRF24OptionScreen;
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setCursor(10, 10);
+  tft.println("NRF24 Options:");
+  
+  // Draw two buttons: "WiFi" and "Bluetooth"
+  int buttonX = BTN_WIFI_X;
+  int buttonWidth = BTN_WIDTH;
+  int buttonHeight = BTN_HEIGHT;
+  int firstButtonY = BTN_WIFI_Y;
+  int secondButtonY = firstButtonY + BTN_HEIGHT + 20;
+  
+  tft.drawRect(buttonX, firstButtonY, buttonWidth, buttonHeight, TFT_WHITE);
+  tft.setTextDatum(MC_DATUM);
+  tft.drawString("WiFi", buttonX + buttonWidth/2, firstButtonY + buttonHeight/2);
+  
+  tft.drawRect(buttonX, secondButtonY, buttonWidth, buttonHeight, TFT_WHITE);
+  tft.setTextDatum(MC_DATUM);
+  tft.drawString("Bluetooth", buttonX + buttonWidth/2, secondButtonY + buttonHeight/2);
+  
+  drawBottomBar();
+}
+
+void handleNRF24OptionScreenTouch(uint16_t x, uint16_t y) {
+  int buttonX = BTN_WIFI_X;
+  int buttonWidth = BTN_WIDTH;
+  int buttonHeight = BTN_HEIGHT;
+  int firstButtonY = BTN_WIFI_Y;
+  int secondButtonY = firstButtonY + BTN_HEIGHT + 20;
+  
+  if(x >= buttonX && x <= (buttonX+buttonWidth)){
+    if(y >= firstButtonY && y <= (firstButtonY+buttonHeight)){
+      performNRF24WiFiScan();
+      return;
+    } else if(y >= secondButtonY && y <= (secondButtonY+buttonHeight)){
+      performNRF24BTScan();
+      return;
+    }
+  }
+  
+  if(x >= BTN_HOME_X && x <= (BTN_HOME_X+BTN_HOME_WIDTH) &&
+     y >= BTN_HOME_Y && y <= (BTN_HOME_Y+BTN_HOME_HEIGHT)){
+    drawHomeScreen();
+    CurrentScreen = HomeScreen;
+    return;
+  }
+  handleBottomBarTouch(x,y);
+}
+
+void performNRF24WiFiScan() {
+  CurrentScreen = NRF24WiFiScreen;
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setCursor(10, 10);
+  tft.println("NRF24 WiFi Scan...");
+  
+  scanWiFiChannels();
+  displayWiFiSubset();
+  drawBottomBar();
+}
+
+void performNRF24BTScan() {
+  CurrentScreen = NRF24BTScreen;
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setCursor(10, 10);
+  tft.println("NRF24 Bluetooth Scan...");
+  
+  scanBTChannels();
+  displayBTSubset();
+  drawBottomBar();
+}
+
+void handleNRF24WiFiScreenTouch(uint16_t x, uint16_t y) {
+  int buttonY = tft.height() - BTN_HEIGHT - 20;
+  if(x >= BTN_HOME_X && x <= (BTN_HOME_X+BTN_HOME_WIDTH) &&
+     y >= buttonY && y <= (buttonY+BTN_HOME_HEIGHT)){
+    drawHomeScreen();
+    CurrentScreen = HomeScreen;
+    return;
+  }
+  handleBottomBarTouch(x, y);
+}
+
+void handleNRF24BTScreenTouch(uint16_t x, uint16_t y) {
+  int buttonY = tft.height() - BTN_HEIGHT - 20;
+  if(x >= BTN_HOME_X && x <= (BTN_HOME_X+BTN_HOME_WIDTH) &&
+     y >= buttonY && y <= (buttonY+BTN_HOME_HEIGHT)){
+    drawHomeScreen();
+    CurrentScreen = HomeScreen;
+    return;
+  }
+  handleBottomBarTouch(x, y);
+}
+
+// --- Modified Scan Functions for Limited Channels ---
+void scanWiFiChannels() {
+  // US WiFi channels mapping: Channel 1: 2412 MHz -> NRF24 channel = 12, Channel 2 -> 17, ... Channel 11 -> 62.
+  int wifiChannels[11] = {12, 17, 22, 27, 32, 37, 42, 47, 52, 57, 62};
+  for (int i = 0; i < 11; i++) {
+    signal_strength[i] = 0; // Index i represents WiFi channel (i+1)
+    radio.setChannel(wifiChannels[i]);
+    for (int j = 0; j < scan_repeats; j++) {
+      radio.startListening();
+      delayMicroseconds(126);
+      if(radio.testRPD()){
+        signal_strength[i]++;
+      }
+      radio.stopListening();
+    }
+  }
+}
+
+
+
+void scanBTChannels() {
+  // BLE channels: for n = 0..39, frequency = 2402+2*n MHz => NRF24 channel = 2 + 2*n.
+  for (int n = 0; n < 40; n++) {
+    signal_strength[n] = 0;
+    int rfChannel = 2 + 2*n;
+    radio.setChannel(rfChannel);
+    for (int j = 0; j < scan_repeats; j++) {
+      radio.startListening();
+      delayMicroseconds(126);
+      if(radio.testRPD()){
+        signal_strength[n]++;
+      }
+      radio.stopListening();
+    }
+  }
+}
+
+// Wi‑Fi graph shifted up 10px
+// Wi‑Fi channel graph (NRF24 Wi‑Fi scan) shifted up 10px,
+// without touching any of the scan text that comes earlier.
+void displayWiFiSubset() {
+  const int yOffset = -10;               // move graph up by 10px
+  int y0 = GRAPH_Y_START + yOffset;
+
+  for (int i = 0; i < 11; i++) {
+    int x = map(i, 0, 10,
+                GRAPH_X_START,
+                GRAPH_X_START + GRAPH_WIDTH - 1);
+    int barHeight = map(signal_strength[i],
+                        0, scan_repeats,
+                        0, GRAPH_HEIGHT);
+    int y1 = y0 + GRAPH_HEIGHT - barHeight;
+
+    uint16_t color = (barHeight < GRAPH_HEIGHT/2)
+                     ? TFT_RED
+                     : TFT_GREEN;
+
+    // Erase previous bar
+    tft.drawFastVLine(x, y0, GRAPH_HEIGHT, TFT_BLACK);
+    // Draw new bar
+    tft.drawFastVLine(x, y1, barHeight, color);
+
+    // Channel label every channel
+    tft.setCursor(x - 5, y0 + GRAPH_HEIGHT + 5);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.print(i + 1);
+  }
+}
+
+// Bluetooth channel graph (NRF24 BT scan) shifted up 10px,
+// again leaving the Bluetooth scan text completely untouched.
+void displayBTSubset() {
+  const int yOffset = -10;
+  int y0 = GRAPH_Y_START + yOffset;
+
+  for (int n = 0; n < 40; n++) {
+    int x = map(n, 0, 39,
+                GRAPH_X_START,
+                GRAPH_X_START + GRAPH_WIDTH - 1);
+    int barHeight = map(signal_strength[n],
+                        0, scan_repeats,
+                        0, GRAPH_HEIGHT);
+    int y1 = y0 + GRAPH_HEIGHT - barHeight;
+
+    uint16_t color = (barHeight < GRAPH_HEIGHT/2)
+                     ? TFT_RED
+                     : TFT_GREEN;
+
+    tft.drawFastVLine(x, y0, GRAPH_HEIGHT, TFT_BLACK);
+    tft.drawFastVLine(x, y1, barHeight, color);
+
+    if (n % 5 == 0) {
+      tft.setCursor(x - 5, y0 + GRAPH_HEIGHT + 5);
+      tft.setTextColor(TFT_WHITE, TFT_BLACK);
+      tft.print(n);
+    }
+  }
+}
+
+
+
+
+void performCalibration() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setCursor(20, 10);
+  tft.println("Touch the corners to calibrate");
+
+  tft.calibrateTouch(calData, TFT_WHITE, TFT_RED, 15);
+  Serial.println("Calibration complete.");
+}
+// Load calibration data
+void loadCalibration() {
+  // For the sake of example, this could load from SPIFFS or a pre-configured PROGMEM
+  Serial.println("Calibration data loaded.");
+}
