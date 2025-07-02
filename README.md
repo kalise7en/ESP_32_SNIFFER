@@ -1,15 +1,81 @@
 # ESP_32_SNIFFER
-A small handheld device inspired by the ESP Maurader that has 2.4ghz capabilities along with Wifi and Bluetooth scanning. Using an Esp-32-S3 alongside a TFT 2.8 screen and a nrf24 module, the Sniffer can create logs of local scans and save them to a sd card for later use. 
 
-Using Arduino for the IDE and flashing the build to the S3 model a grid of icons will appear. The WIFI and BLUETOOTH icons do general scans that include SSID, RSSI, CHANNEL for Wifi and MAC, RSSI for Bluetooth. The SD card logo allows you to initialize the card and see saved files to confirm. The last icon is for a spectrum scanner that I will be improving on as it's scanning process isn't terribly accurate. 
+A compact handheld device inspired by the ESP32 Marauder, equipped with 2.4GHz capabilities for Wi-Fi and Bluetooth scanning. Built using an **ESP32-S3**, a **2.8" TFT display**, and an **nRF24 module**, this sniffer can perform real-time scans and log data to an SD card for later review.
 
-The whole project has took a year on an off hitting roadbocks through the process. Please check out justcallmekoko/ESP32Marauder his work is amazing.
+---
 
+## 🔍 Features
 
-PRODUCTS
+- **Wi-Fi Scanner**  
+  Detects SSID, RSSI, and Channel
 
-ESP32-S3 Development board
-nrf24l01 + pa + lna (radio peripheral)
-ILI9341 2.8" SPI TFT LCD
-Anker A1645 nano power bank (I used this one but you can power it with anything that can supply 5v/3A)
-Case STL file in main.
+- **Bluetooth Scanner**  
+  Scans for MAC addresses and RSSI
+
+- **SD Card Logger**  
+  Initialize SD card and view saved log files
+
+- **2.4GHz Spectrum Scanner**  
+  (Currently under refinement for improved accuracy)
+
+---
+
+## 🧰 Hardware Used
+
+- **ESP32-S3 Development Board**
+- **nRF24L01+ PA + LNA** (radio peripheral)
+- **2.8" ILI9341 SPI TFT LCD**
+- **Anker A1645 Nano Power Bank** (or any 5V/3A power source)
+- **3D-Printed Case** (STL file included in repo)
+
+---
+
+## ⚙️ Software
+
+- **IDE**: Arduino
+- **Flashing Target**: ESP32-S3
+- **Libraries Used**:
+  - `Adafruit_GFX`
+  - `Adafruit_ILI9341`
+  - `WiFi.h`, `BluetoothSerial.h`
+  - `SD.h`, `SPI.h`
+  - And others bundled via the Arduino Library Manager
+
+---
+
+## 📸 UI Overview
+
+Upon boot, the device presents a grid of icons:
+
+- 📶 Wi-Fi Scan
+- 📱 Bluetooth Scan
+- 💾 SD Card Access
+- 📡 Spectrum Scanner
+
+> *More features and improvements are planned.*
+
+---
+
+## 📚 Acknowledgments
+
+This project was inspired by [justcallmekoko/ESP32Marauder](https://github.com/justcallmekoko/ESP32Marauder). Check out his repository—it's a fantastic resource for similar tools and concepts.
+
+---
+
+## 🚧 Notes
+
+- The spectrum scanner is functional but still being improved.
+- Logging is reliable, but parsing tools for logs will be added soon.
+- This project has been a long-term effort across a year with learning curves and roadblocks—feedback is welcome!
+
+---
+
+## 🖨️ STL File
+
+The STL file for the 3D-printable case is included in the repo.
+
+---
+
+## License
+
+MIT License (or your preferred one)
