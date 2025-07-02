@@ -1,72 +1,50 @@
-# ESP_32_SNIFFER
+# CYBER_DECK
 
-The ESP_32_SNIFFER is a self‑contained handheld platform for 2.4 GHz monitoring.  
-Built around an ESP32‑S3 microcontroller, an ILI9341‑based 2.8‑inch TFT display, and an nRF24L01+ PA / LNA transceiver, the device can scan Wi‑Fi and Bluetooth environments and record the resulting data to a microSD card.
-
----
-
-## Features
-
-| Function                | Output fields                                       |
-|-------------------------|-----------------------------------------------------|
-| Wi‑Fi scanner           | Service set identifier (SSID), received‑signal strength indicator (RSSI), channel |
-| Bluetooth scanner       | Media‑access‑control (MAC) address, RSSI            |
-| SD‑card logging         | Initialise card, browse and verify saved log files  |
-| 2.4 GHz spectrum scan   | Experimental; accuracy improvements in progress     |
-
-A graphical start screen presents four touch‑selectable icons corresponding to the functions above.
+The Cyber_Deck is a portable, customizable computing system housed in a weatherproof case. It is built around a Raspberry Pi 5 and designed for independent security auditing and wireless experimentation. The system includes a 10-inch touchscreen, 2TB NVMe SSD for storage, and a 65,000mAh power bank. Running Kali Linux, it supports Wi-Fi and SDR-based testing and monitoring.
 
 ---
 
-## Hardware
+## Hardware Components
 
-- ESP32‑S3 development board  
-- nRF24L01+ PA / LNA transceiver module  
-- ILI9341 2.8‑inch SPI TFT LCD  
-- 5 V / 3 A power source (tested with an Anker A1645 Nano power bank)  
-- Weather‑resistant printed enclosure (STL file supplied)
-
----
-
-## Software
-
-- Development environment: **Arduino IDE**  
-- Core libraries:  
-
-  | Library | Purpose |
-  |---------|---------|
-  | `Adafruit_GFX` / `Adafruit_ILI9341` | Display graphics |
-  | `WiFi.h` | Wi‑Fi interface |
-  | `BluetoothSerial.h` | Classic Bluetooth scanning |
-  | `SD.h`, `SPI.h` | File system and SPI bus |
-  | Additional support libraries via Arduino Library Manager |
-
-Compile the sketch for the **ESP32‑S3** target, then flash via USB.
+- Raspberry Pi 5 (8GB RAM)
+- Official Raspberry Pi 5 Active Cooler with aluminum heatsink and blower
+- 10.1" IPS LCD Touchscreen Display (1024x600 resolution)
+- 2TB Crucial P3 NVMe SSD in a Dockteck USB 3.2 tool-free enclosure
+- 65,000mAh power bank with USB Power Delivery (22.5W)
+- MEIJIA all-weather waterproof protective case (15.98" x 12.99" x 6.85")
+- Panel-mounted and short cables:
+  - Micro HDMI to HDMI (90° angled)
+  - USB 3.0 male to female extensions
+  - USB-C male to female extension
+  - RJ45 Ethernet extension (panel mount)
+  - 3.5mm stereo audio extension
 
 ---
 
-## Project Status
+## Wireless and Radio Adapters
 
-Development has been conducted intermittently over the past year.  
-Current priorities:
+- NooElec Smart V5 SDR for radio frequency analysis
+- Panda Wireless PAU0F AXE3000 WiFi 6E adapter (supports monitor mode)
 
-1. Refinement of the spectrum‑scanner algorithm  
-2. Addition of parsing and visualisation tools for saved log files  
-3. General code refactoring and documentation
-
-Contributions and issue reports are welcome.
+Note: Various online tutorials are available for configuring these adapters with GQRX, GNU Radio, and Airmon-ng.
 
 ---
 
-## Acknowledgements
+## Power Management Considerations
 
-The project is inspired by, and makes reference to, the work in  
-*justcallmekoko/ESP32Marauder* (GitHub).  
-That repository remains an excellent reference for ESP32‑based wireless assessment.
+- The Raspberry Pi 5 requires ~27W during boot. To ensure smooth operation without manual intervention, set `max_current_enable=1` in `config.txt`.
+- USB PD-compatible power banks are recommended to handle high current demand.
+- If using a power bank without a hardware switch, a kill switch can be added inline between the battery and PCB. Only perform such modifications if properly trained, as lithium-ion batteries can be hazardous.
 
 ---
 
-## Licence
+## Software and Offline Tools
 
-This project is released under the MIT Licence unless otherwise stated.
+- **Kiwix** for offline access to large information repositories such as Wikipedia (via ZIM files)
+- **Ollama** for running lightweight local LLMs through the terminal
+- **Kali Linux** full penetration testing suite
 
+Be sure to update your system before disconnecting from the internet:
+
+```bash
+sudo apt update && sudo apt upgrade -y
