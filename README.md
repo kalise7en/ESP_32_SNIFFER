@@ -1,81 +1,72 @@
 # ESP_32_SNIFFER
 
-A compact handheld device inspired by the ESP32 Marauder, equipped with 2.4GHz capabilities for Wi-Fi and Bluetooth scanning. Built using an **ESP32-S3**, a **2.8" TFT display**, and an **nRF24 module**, this sniffer can perform real-time scans and log data to an SD card for later review.
+The ESP_32_SNIFFER is a self‑contained handheld platform for 2.4 GHz monitoring.  
+Built around an ESP32‑S3 microcontroller, an ILI9341‑based 2.8‑inch TFT display, and an nRF24L01+ PA / LNA transceiver, the device can scan Wi‑Fi and Bluetooth environments and record the resulting data to a microSD card.
 
 ---
 
-## 🔍 Features
+## Features
 
-- **Wi-Fi Scanner**  
-  Detects SSID, RSSI, and Channel
+| Function                | Output fields                                       |
+|-------------------------|-----------------------------------------------------|
+| Wi‑Fi scanner           | Service set identifier (SSID), received‑signal strength indicator (RSSI), channel |
+| Bluetooth scanner       | Media‑access‑control (MAC) address, RSSI            |
+| SD‑card logging         | Initialise card, browse and verify saved log files  |
+| 2.4 GHz spectrum scan   | Experimental; accuracy improvements in progress     |
 
-- **Bluetooth Scanner**  
-  Scans for MAC addresses and RSSI
-
-- **SD Card Logger**  
-  Initialize SD card and view saved log files
-
-- **2.4GHz Spectrum Scanner**  
-  (Currently under refinement for improved accuracy)
+A graphical start screen presents four touch‑selectable icons corresponding to the functions above.
 
 ---
 
-## 🧰 Hardware Used
+## Hardware
 
-- **ESP32-S3 Development Board**
-- **nRF24L01+ PA + LNA** (radio peripheral)
-- **2.8" ILI9341 SPI TFT LCD**
-- **Anker A1645 Nano Power Bank** (or any 5V/3A power source)
-- **3D-Printed Case** (STL file included in repo)
-
----
-
-## ⚙️ Software
-
-- **IDE**: Arduino
-- **Flashing Target**: ESP32-S3
-- **Libraries Used**:
-  - `Adafruit_GFX`
-  - `Adafruit_ILI9341`
-  - `WiFi.h`, `BluetoothSerial.h`
-  - `SD.h`, `SPI.h`
-  - And others bundled via the Arduino Library Manager
+- ESP32‑S3 development board  
+- nRF24L01+ PA / LNA transceiver module  
+- ILI9341 2.8‑inch SPI TFT LCD  
+- 5 V / 3 A power source (tested with an Anker A1645 Nano power bank)  
+- Weather‑resistant printed enclosure (STL file supplied)
 
 ---
 
-## 📸 UI Overview
+## Software
 
-Upon boot, the device presents a grid of icons:
+- Development environment: **Arduino IDE**  
+- Core libraries:  
 
-- 📶 Wi-Fi Scan
-- 📱 Bluetooth Scan
-- 💾 SD Card Access
-- 📡 Spectrum Scanner
+  | Library | Purpose |
+  |---------|---------|
+  | `Adafruit_GFX` / `Adafruit_ILI9341` | Display graphics |
+  | `WiFi.h` | Wi‑Fi interface |
+  | `BluetoothSerial.h` | Classic Bluetooth scanning |
+  | `SD.h`, `SPI.h` | File system and SPI bus |
+  | Additional support libraries via Arduino Library Manager |
 
-> *More features and improvements are planned.*
-
----
-
-## 📚 Acknowledgments
-
-This project was inspired by [justcallmekoko/ESP32Marauder](https://github.com/justcallmekoko/ESP32Marauder). Check out his repository—it's a fantastic resource for similar tools and concepts.
+Compile the sketch for the **ESP32‑S3** target, then flash via USB.
 
 ---
 
-## 🚧 Notes
+## Project Status
 
-- The spectrum scanner is functional but still being improved.
-- Logging is reliable, but parsing tools for logs will be added soon.
-- This project has been a long-term effort across a year with learning curves and roadblocks—feedback is welcome!
+Development has been conducted intermittently over the past year.  
+Current priorities:
+
+1. Refinement of the spectrum‑scanner algorithm  
+2. Addition of parsing and visualisation tools for saved log files  
+3. General code refactoring and documentation
+
+Contributions and issue reports are welcome.
 
 ---
 
-## 🖨️ STL File
+## Acknowledgements
 
-The STL file for the 3D-printable case is included in the repo.
+The project is inspired by, and makes reference to, the work in  
+*justcallmekoko/ESP32Marauder* (GitHub).  
+That repository remains an excellent reference for ESP32‑based wireless assessment.
 
 ---
 
-## License
+## Licence
 
-MIT License (or your preferred one)
+This project is released under the MIT Licence unless otherwise stated.
+
